@@ -6,10 +6,10 @@ const User = require('../models/User');
 let io;
 
 // Initialize Socket.io with the HTTP server
-exports.init = (server) => {
+const initialize = (server) => {
   io = socketio(server, {
     cors: {
-      origin: process.env.CLIENT_URL || 'http://localhost:3000',
+      origin: process.env.CLIENT_URL || 'http://localhost:3004',
       methods: ['GET', 'POST'],
       credentials: true
     }
@@ -51,7 +51,7 @@ exports.init = (server) => {
   
   // Connection event
   io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.user.username} (${socket.id})`);
+    console.log('New client connected', socket.id);
     
     // Join user's personal room for private messages
     socket.join(socket.user.id);
@@ -92,7 +92,7 @@ exports.init = (server) => {
     
     // Handle disconnection
     socket.on('disconnect', () => {
-      console.log(`User disconnected: ${socket.user.username} (${socket.id})`);
+      console.log('Client disconnected', socket.id);
     });
   });
   
@@ -100,12 +100,14 @@ exports.init = (server) => {
 };
 
 // Get the io instance
-exports.getIO = () => {
+const getIO = () => {
   if (!io) {
     throw new Error('Socket.io not initialized');
   }
   return io;
 };
 
-// Export the io instance directly
-exports.io = io; 
+module.exports = {
+  init: initialize,
+  getIO
+}; 

@@ -34,7 +34,7 @@ const MainLayout = () => {
           <div className="h-3 w-3 rounded-full bg-green-500 cursor-pointer hover:bg-green-600"></div>
         </div>
         <div className="flex mx-4 space-x-4">
-          <div className="flex items-center font-bold">Spatial Image Board</div>
+          <div className="flex items-center font-bold">Eternalfile</div>
           <div className="flex items-center cursor-pointer hover:bg-gray-300 px-2 py-0.5 rounded">File</div>
           <div className="flex items-center cursor-pointer hover:bg-gray-300 px-2 py-0.5 rounded">Edit</div>
           <div className="flex items-center cursor-pointer hover:bg-gray-300 px-2 py-0.5 rounded">View</div>

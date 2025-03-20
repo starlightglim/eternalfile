@@ -9,14 +9,10 @@ const { authenticate, authorizeOwnerOrAdmin } = require('../middleware/auth');
 const Image = require('../models/Image');
 const Board = require('../models/Board');
 const socketio = require('../services/socketio');
+const s3Service = require('../services/s3Service');
 
-// AWS S3 Configuration
-const AWS = require('aws-sdk');
-const s3 = new AWS.S3({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION
-});
+// Initialize S3 service
+s3Service.initialize();
 
 // Configure multer for temporary file storage
 const upload = multer({
@@ -42,22 +38,6 @@ const upload = multer({
     }
   }
 });
-
-// Helper to upload file to S3
-const uploadToS3 = async (filePath, fileName, contentType) => {
-  const fileContent = fs.readFileSync(filePath);
-  
-  const params = {
-    Bucket: process.env.S3_BUCKET_NAME,
-    Key: `images/${fileName}`,
-    Body: fileContent,
-    ContentType: contentType,
-    ACL: 'public-read'
-  };
-  
-  const data = await s3.upload(params).promise();
-  return data.Location;
-};
 
 // Middleware to validate board ownership or collaboration rights
 const validateBoardAccess = async (req, res, next) => {
@@ -97,28 +77,25 @@ const validateBoardAccess = async (req, res, next) => {
 // @desc    Upload an image
 // @access  Private
 router.post('/upload', authenticate, validateBoardAccess, upload.single('image'), async (req, res) => {
+  let tempFiles = [];
+  
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No image file provided' });
     }
     
+    tempFiles.push(req.file.path);
+    
     const { title, description, position, folderId, tags } = req.body;
     const boardId = req.body.boardId;
     
-    // Get image dimensions
-    const metadata = await sharp(req.file.path).metadata();
-    
-    // Generate a thumbnail
-    const thumbnailFileName = `thumbnail-${path.basename(req.file.path)}`;
-    const thumbnailPath = path.join(path.dirname(req.file.path), thumbnailFileName);
-    
-    await sharp(req.file.path)
-      .resize(300, 300, { fit: 'inside' })
-      .toFile(thumbnailPath);
-    
-    // Upload original image and thumbnail to S3
-    const imageUrl = await uploadToS3(req.file.path, path.basename(req.file.path), req.file.mimetype);
-    const thumbnailUrl = await uploadToS3(thumbnailPath, thumbnailFileName, 'image/jpeg');
+    // Upload to S3 with our improved service
+    const uniqueFileName = path.basename(req.file.path);
+    const { imageUrl, thumbnailUrl, metadata } = await s3Service.uploadImageWithThumbnail(
+      req.file.path,
+      uniqueFileName,
+      req.file.mimetype
+    );
     
     // Parse position data
     let positionData = {
@@ -169,14 +146,19 @@ router.post('/upload', authenticate, validateBoardAccess, upload.single('image')
           width: metadata.width,
           height: metadata.height
         }
-      }
+      },
+      s3Key: s3Service.getKeyFromUrl(imageUrl),
+      thumbnailKey: s3Service.getKeyFromUrl(thumbnailUrl)
     });
     
     const savedImage = await newImage.save();
     
     // Clean up temp files
-    fs.unlinkSync(req.file.path);
-    fs.unlinkSync(thumbnailPath);
+    tempFiles.forEach(file => {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    });
     
     // Notify clients about new image
     socketio.io.to(`board:${boardId}`).emit('image:add', savedImage);
@@ -201,12 +183,14 @@ router.post('/upload', authenticate, validateBoardAccess, upload.single('image')
   } catch (error) {
     console.error('Image upload error:', error);
     
-    // Clean up temp file if it exists
-    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
+    // Clean up temp files
+    tempFiles.forEach(file => {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    });
     
-    res.status(500).json({ message: 'Server error during image upload' });
+    res.status(500).json({ message: `Server error during image upload: ${error.message}` });
   }
 });
 
@@ -424,7 +408,7 @@ router.put('/:id/position', authenticate, async (req, res) => {
 
 // @route   DELETE /api/images/:id
 // @desc    Delete an image
-// @access  Private (owner only)
+// @access  Private
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const image = await Image.findById(req.params.id);
@@ -433,19 +417,35 @@ router.delete('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ message: 'Image not found' });
     }
     
-    // Check if user is owner
-    if (image.userId.toString() !== req.user.id) {
+    // Check if user is owner of the image or has admin rights
+    if (image.userId.toString() !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ message: 'Not authorized to delete this image' });
     }
     
-    // Delete from S3 if needed
-    // Note: You might want to keep the files on S3 and just mark as deleted in the database
-    // to avoid broken links and allow for recovery
+    // Check if board exists and user has rights
+    const board = await Board.findById(image.boardId);
+    if (!board) {
+      return res.status(404).json({ message: 'Associated board not found' });
+    }
     
-    // Delete the image from database
+    const isOwner = board.userId.toString() === req.user.id;
+    const isAdmin = board.collaborators.some(
+      collab => collab.userId.toString() === req.user.id && collab.role === 'admin'
+    );
+    
+    if (!isOwner && !isAdmin && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to delete images from this board' });
+    }
+    
+    // Remove from S3 if stored there
+    if (image.metadata.storageProvider === 's3') {
+      await image.deleteFromS3();
+    }
+    
+    // Remove the image
     await image.remove();
     
-    // Notify clients about image deletion
+    // Notify clients
     socketio.io.to(`board:${image.boardId}`).emit('image:delete', {
       imageId: image._id,
       boardId: image.boardId
@@ -453,11 +453,12 @@ router.delete('/:id', authenticate, async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Image deleted successfully'
+      message: 'Image deleted',
+      imageId: req.params.id
     });
   } catch (error) {
-    console.error('Delete image error:', error);
-    res.status(500).json({ message: 'Server error during image deletion' });
+    console.error('Error deleting image:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -510,6 +511,30 @@ router.get('/user/:userId', async (req, res) => {
     console.error('Get user images error:', error);
     res.status(500).json({ message: 'Server error while fetching user images' });
   }
+});
+
+// Get all images
+router.get('/', (req, res) => {
+  res.status(200).json({ 
+    images: [
+      { id: '1', url: '/api/placeholder/400/300', title: 'Image 1' },
+      { id: '2', url: '/api/placeholder/300/400', title: 'Image 2' },
+      { id: '3', url: '/api/placeholder/500/300', title: 'Image 3' }
+    ]
+  });
+});
+
+// Get image by ID
+router.get('/:id', (req, res) => {
+  res.status(200).json({ 
+    image: { 
+      id: req.params.id, 
+      url: '/api/placeholder/400/300',
+      title: `Image ${req.params.id}`,
+      width: 400,
+      height: 300
+    }
+  });
 });
 
 module.exports = router; 

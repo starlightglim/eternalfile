@@ -174,7 +174,7 @@ const foldersSlice = createSlice({
       .addCase(fetchFolderById.fulfilled, (state, action) => {
         state.loading = false;
         state.currentFolder = action.payload.folder;
-        state.subfolders = action.payload.subfolders;
+        state.subfolders = action.payload.subfolders || [];
       })
       .addCase(fetchFolderById.rejected, (state, action) => {
         state.loading = false;

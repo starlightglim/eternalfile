@@ -28,7 +28,7 @@ const FolderView = () => {
   
   const { 
     currentFolder, 
-    subfolders, 
+    subfolders = [],
     loading, 
     error 
   } = useSelector(state => state.folders);
@@ -149,7 +149,7 @@ const FolderView = () => {
       {/* Folder content */}
       <div>
         {/* Subfolders section */}
-        {subfolders.length > 0 && (
+        {subfolders && subfolders.length > 0 && (
           <div className="mb-8">
             <h2 className="text-lg font-semibold mb-4">Subfolders</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">

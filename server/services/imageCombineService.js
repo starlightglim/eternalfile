@@ -290,4 +290,34 @@ router.get('/:id/history', authenticate, async (req, res) => {
   }
 });
 
+// Demo API for combining images
+router.post('/', (req, res) => {
+  const { images } = req.body;
+  
+  if (!images || !Array.isArray(images) || images.length < 2) {
+    return res.status(400).json({ message: 'Please provide at least 2 images to combine' });
+  }
+  
+  // Simulate combining images with a timeout
+  setTimeout(() => {
+    // Return a placeholder image as the result
+    return res.status(200).json({ 
+      message: 'Images combined successfully', 
+      resultUrl: '/api/placeholder/800/600'
+    });
+  }, 2000);
+});
+
+// Get status of a combine job
+router.get('/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  
+  // Simulate checking job status
+  return res.status(200).json({
+    jobId,
+    status: 'completed',
+    resultUrl: '/api/placeholder/800/600'
+  });
+});
+
 module.exports = router; 

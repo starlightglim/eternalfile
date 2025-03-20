@@ -12,12 +12,12 @@ const AuthLayout = () => {
             <div className="h-3 w-3 rounded-full bg-yellow-500"></div>
             <div className="h-3 w-3 rounded-full bg-green-500"></div>
           </div>
-          <div className="ml-4 font-bold text-sm">Spatial Image Board</div>
+          <div className="ml-4 font-bold text-sm">eternalfile</div>
         </div>
         
         <div className="flex-1 flex flex-col items-center justify-center p-8">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold mb-4">Spatial Image Board</h1>
+            <h1 className="text-4xl font-bold mb-4">eternalfile</h1>
             <p className="text-gray-600 text-lg">
               A vintage macOS-inspired platform for arranging and combining images with AI
             </p>

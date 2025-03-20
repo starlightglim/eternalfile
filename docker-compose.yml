@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # MongoDB service
+  mongodb:
+    image: mongo:5
+    container_name: mongodb
+    restart: always
+    environment:
+      - MONGO_INITDB_DATABASE=eternalfile
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - app-network
+
+  # Server API service
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: eternalfile-server
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./server/uploads:/app/uploads
+    env_file:
+      - ./server/.env.production
+    networks:
+      - eternalfile-network
+
+  # Client app service
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: eternalfile-client
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    depends_on:
+      - server
+    networks:
+      - eternalfile-network
+
+# Shared networks
+networks:
+  app-network:
+    driver: bridge
+  eternalfile-network:
+    driver: bridge
+
+# Shared volumes
+volumes:
+  mongo-data:
+    driver: local 

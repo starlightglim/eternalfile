@@ -28,7 +28,7 @@ const Header = ({ onToggleSidebar }) => {
       return 'Settings';
     }
     
-    return 'Spatial Image Board';
+    return 'eternalfile';
   };
   
   const handleUploadClick = () => {

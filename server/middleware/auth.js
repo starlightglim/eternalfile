@@ -1,111 +1,84 @@
 const jwt = require('jsonwebtoken');
+const logger = require('../utils/logger');
 const User = require('../models/User');
+const mongoose = require('mongoose');
 
-// Middleware to authenticate users with JWT
-exports.authenticate = async (req, res, next) => {
+// Middleware to check if the user is authenticated
+const authenticate = async (req, res, next) => {
+  // For development, allow bypassing authentication
+  if (process.env.NODE_ENV === 'development' && process.env.BYPASS_AUTH === 'true') {
+    try {
+      // Try to get the demo user from the database
+      const demoUser = await User.findOne({ email: 'demo@example.com' });
+      if (demoUser) {
+        req.user = { id: demoUser._id, username: demoUser.username, role: demoUser.role };
+        logger.debug(`Using demo user: ${demoUser._id}`);
+      } else {
+        // Create a real MongoDB user if it doesn't exist
+        const newDemoUser = new User({
+          username: 'demo',
+          email: 'demo@example.com',
+          passwordHash: 'password123', // Will be hashed by the User model pre-save hook
+          role: 'user',
+          isVerified: true
+        });
+        
+        await newDemoUser.save();
+        req.user = { id: newDemoUser._id, username: newDemoUser.username, role: newDemoUser.role };
+        logger.info(`Created demo user for development: ${newDemoUser._id}`);
+      }
+      return next();
+    } catch (error) {
+      logger.error('Error setting up demo user:', error);
+      return res.status(500).json({ message: 'Server error setting up demo user' });
+    }
+  }
+
+  // Get token from header, query, or cookie
+  const token = req.header('x-auth-token') || 
+                req.query.token || 
+                req.cookies.token;
+
+  // Check if no token
+  if (!token) {
+    return res.status(401).json({ message: 'No authentication token, access denied' });
+  }
+
   try {
-    let token;
-    
-    // Check if token exists in authorization header
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    } 
-    // Check if token exists in cookies
-    else if (req.cookies && req.cookies.token) {
-      token = req.cookies.token;
-    }
-    
-    // If no token found, return unauthorized
-    if (!token) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Not authorized to access this route' 
-      });
-    }
-    
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // Find user by id
-    const user = await User.findById(decoded.id);
-    
-    if (!user) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-    
-    // Add user to request object
-    req.user = user;
+    // Add user from payload to request
+    req.user = decoded;
     next();
   } catch (error) {
-    console.error('Authentication error:', error);
-    
-    if (error.name === 'JsonWebTokenError') {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Invalid token' 
-      });
-    }
-    
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token expired' 
-      });
-    }
-    
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Server error during authentication' 
-    });
+    logger.warn('Authentication error', { error: error.message });
+    res.status(401).json({ message: 'Token is not valid' });
   }
 };
 
-// Middleware to check if user is admin
-exports.authorizeAdmin = (req, res, next) => {
+// Middleware to check if user is an admin
+const authorizeAdmin = (req, res, next) => {
   if (req.user && req.user.role === 'admin') {
-    next();
-  } else {
-    return res.status(403).json({ 
-      success: false, 
-      message: 'Admin access required for this route' 
-    });
+    return next();
   }
+  
+  return res.status(403).json({ message: 'Access denied: Admin privilege required' });
 };
 
-// Middleware to check if user owns a resource or is admin
-exports.authorizeOwnerOrAdmin = (model) => async (req, res, next) => {
-  try {
-    const resourceId = req.params.id;
-    const resource = await model.findById(resourceId);
-    
-    if (!resource) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'Resource not found' 
-      });
-    }
-    
-    // Check if user is owner or admin
-    if (
-      (resource.userId && resource.userId.toString() === req.user.id) || 
-      req.user.role === 'admin'
-    ) {
-      req.resource = resource; // Attach resource to request for later use
-      next();
-    } else {
-      return res.status(403).json({ 
-        success: false, 
-        message: 'Not authorized to access this resource' 
-      });
-    }
-  } catch (error) {
-    console.error('Authorization error:', error);
-    return res.status(500).json({ 
-      success: false, 
-      message: 'Server error during authorization' 
-    });
+// Middleware to check if user is owner or admin
+const authorizeOwnerOrAdmin = (req, res, next) => {
+  const resourceUserId = req.params.userId || req.body.userId;
+  
+  if (!resourceUserId) {
+    return res.status(400).json({ message: 'User ID is required' });
   }
-}; 
+  
+  if (req.user.id === resourceUserId || req.user.role === 'admin') {
+    return next();
+  }
+  
+  return res.status(403).json({ message: 'Access denied: Not the owner' });
+};
+
+module.exports = { authenticate, authorizeAdmin, authorizeOwnerOrAdmin }; 

@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { authenticate } = require('../middleware/auth');
 const User = require('../models/User');
 const Folder = require('../models/Folder');
+const logger = require('../utils/logger');
 
 // @route   POST /api/auth/register
 // @desc    Register a new user
@@ -14,22 +15,18 @@ router.post('/register', async (req, res) => {
     const { username, email, password } = req.body;
     
     // Check if user already exists
-    let user = await User.findOne({ email });
-    if (user) {
-      return res.status(400).json({ message: 'User already exists with this email' });
-    }
-    
-    user = await User.findOne({ username: username.startsWith('@') ? username : `@${username}` });
-    if (user) {
-      return res.status(400).json({ message: 'Username is already taken' });
+    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+    if (existingUser) {
+      return res.status(400).json({ 
+        message: 'User with this email or username already exists' 
+      });
     }
     
     // Create new user
-    user = new User({
+    const user = new User({
       username,
       email,
-      passwordHash: password, // Will be hashed by pre-save hook
-      lastLogin: new Date()
+      passwordHash: password, // Will be hashed by the pre-save hook
     });
     
     await user.save();
@@ -44,30 +41,30 @@ router.post('/register', async (req, res) => {
     
     await defaultFolder.save();
     
-    // Generate JWT token
+    // Generate token
     const token = user.generateAuthToken();
     
-    // Set cookie with token
+    // Set token in cookie
     res.cookie('token', token, {
       httpOnly: true,
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      sameSite: 'strict'
     });
     
-    // Return user data and token
+    // Return user info
     res.status(201).json({
-      success: true,
-      token,
+      message: 'User registered successfully',
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
-        profileGif: user.profileGif,
         role: user.role
-      }
+      },
+      token
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    logger.error('Registration error:', error);
     res.status(500).json({ message: 'Server error during registration' });
   }
 });
@@ -82,43 +79,43 @@ router.post('/login', async (req, res) => {
     // Check if user exists
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
     
     // Check password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
     
     // Update last login
-    user.lastLogin = new Date();
+    user.lastLogin = Date.now();
     await user.save();
     
-    // Generate JWT token
+    // Generate token
     const token = user.generateAuthToken();
     
-    // Set cookie with token
+    // Set token in cookie
     res.cookie('token', token, {
       httpOnly: true,
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+      sameSite: 'strict'
     });
     
-    // Return user data and token
-    res.json({
-      success: true,
-      token,
+    // Return user info
+    res.status(200).json({
+      message: 'Login successful',
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
-        profileGif: user.profileGif,
         role: user.role
-      }
+      },
+      token
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error:', error);
     res.status(500).json({ message: 'Server error during login' });
   }
 });
@@ -129,17 +126,13 @@ router.post('/login', async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-passwordHash');
-    
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
     
-    res.json({
-      success: true,
-      user
-    });
+    res.status(200).json({ user });
   } catch (error) {
-    console.error('Get user error:', error);
+    logger.error('Get current user error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -147,9 +140,9 @@ router.get('/me', authenticate, async (req, res) => {
 // @route   POST /api/auth/logout
 // @desc    Logout user
 // @access  Private
-router.post('/logout', authenticate, (req, res) => {
+router.post('/logout', (req, res) => {
   res.clearCookie('token');
-  res.json({ success: true, message: 'Logged out successfully' });
+  res.status(200).json({ message: 'Logout successful' });
 });
 
 // @route   PUT /api/auth/profile
