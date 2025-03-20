@@ -75,3 +75,4 @@ docker_data/
 *.pem
 *.key
 *.crt
+.env
